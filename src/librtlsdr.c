@@ -1642,18 +1642,39 @@ int rtlsdr_read_sync(rtlsdr_dev_t *dev, void *buf, int len, int *n_read)
 static void LIBUSB_CALL _libusb_callback(struct libusb_transfer *xfer)
 {
 	rtlsdr_dev_t *dev = (rtlsdr_dev_t *)xfer->user_data;
+	int do_free_xfer = (NULL != dev->xfer);
 
 	if (LIBUSB_TRANSFER_COMPLETED == xfer->status) {
 		if (dev->cb)
 			dev->cb(xfer->buffer, xfer->actual_length, dev->cb_ctx);
 
-		libusb_submit_transfer(xfer); /* resubmit transfer */
-	} else if (LIBUSB_TRANSFER_CANCELLED != xfer->status &&
-				LIBUSB_TRANSFER_COMPLETED != xfer->status) {
-		dev->dev_lost = 1;
-		rtlsdr_cancel_async(dev);
+		if (RTLSDR_RUNNING == dev->async_status) {
+			int r = libusb_submit_transfer(xfer); /* resubmit transfer */
+			if (0 == r)
+				do_free_xfer = 0;
+			else
+				fprintf(stderr, "Failed to resubmit transfer!\n");
+		}
+	} else if (LIBUSB_TRANSFER_CANCELLED != xfer->status) {
 		fprintf(stderr, "cb transfer status: %d, canceling...\n", xfer->status);
 	}
+	/* Cancelled or errored-out transfer: free the async buffer so
+	 * rtlsdr_read_async knows it's safe to quit */
+        if (do_free_xfer) {
+		unsigned int i;
+		if (RTLSDR_RUNNING == dev->async_status) {
+			/* Force cancel due to problem discovered by callback */
+			dev->dev_lost = 1;
+			rtlsdr_cancel_async(dev);
+		}
+		for (i = 0; i < dev->xfer_buf_num; ++i) {
+			if (xfer == dev->xfer[i]) {
+				libusb_free_transfer(xfer);
+				dev->xfer[i] = NULL;
+				break;
+			}
+		}
+        }
 }
 
 int rtlsdr_wait_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx)
@@ -1696,6 +1717,7 @@ static int _rtlsdr_free_async_buffers(rtlsdr_dev_t *dev)
 
 	if (dev->xfer) {
 		for(i = 0; i < dev->xfer_buf_num; ++i) {
+			/* Buffers normally freed and zeroed in callback */
 			if (dev->xfer[i]) {
 				libusb_free_transfer(dev->xfer[i]);
 			}
@@ -1765,11 +1787,20 @@ int rtlsdr_read_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx,
 		if (r < 0) {
 			fprintf(stderr, "Failed to submit transfer %i!\n", i);
 			dev->async_status = RTLSDR_CANCELING;
+
+			/* Simulate processing of cancelled transfers
+			 * to account for unsubmitted requests */
+			while (i < dev->xfer_buf_num) {
+				dev->xfer[i]->status = LIBUSB_TRANSFER_CANCELLED;
+				_libusb_callback(dev->xfer[i]);
+				++i;
+			}
 			break;
 		}
 	}
 
-	while (RTLSDR_INACTIVE != dev->async_status) {
+	next_status = dev->async_status;
+	while (RTLSDR_INACTIVE != next_status) {
 		r = libusb_handle_events_timeout_completed(dev->ctx, &tv,
 							   &dev->async_cancel);
 		if (r < 0) {
@@ -1789,28 +1820,8 @@ int rtlsdr_read_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx,
 				if (!dev->xfer[i])
 					continue;
 
-				if (LIBUSB_TRANSFER_CANCELLED !=
-						dev->xfer[i]->status) {
-					r = libusb_cancel_transfer(dev->xfer[i]);
-					/* handle events after canceling
-					 * to allow transfer status to
-					 * propagate */
-					libusb_handle_events_timeout_completed(dev->ctx,
-									       &zerotv, NULL);
-					if (r < 0)
-						continue;
-
-					next_status = RTLSDR_CANCELING;
-				}
-			}
-
-			if (dev->dev_lost || RTLSDR_INACTIVE == next_status) {
-				/* handle any events that still need to
-				 * be handled before exiting after we
-				 * just cancelled all transfers */
-				libusb_handle_events_timeout_completed(dev->ctx,
-								       &zerotv, NULL);
-				break;
+                                next_status = RTLSDR_CANCELING;
+				(void)libusb_cancel_transfer(dev->xfer[i]);
 			}
 		}
 	}
