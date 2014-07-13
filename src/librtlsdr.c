@@ -1820,8 +1820,9 @@ int rtlsdr_read_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx,
 				if (!dev->xfer[i])
 					continue;
 
-                                next_status = RTLSDR_CANCELING;
+				next_status = RTLSDR_CANCELING;
 				(void)libusb_cancel_transfer(dev->xfer[i]);
+				(void)libusb_handle_events_timeout_completed(dev->ctx, &zerotv, NULL);
 			}
 		}
 	}
