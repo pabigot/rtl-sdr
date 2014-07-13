@@ -122,7 +122,6 @@ struct rtlsdr_dev {
 	/* status */
 	int dev_lost;
 	int driver_active;
-	unsigned int xfer_errors;
 };
 
 void rtlsdr_set_gpio_bit(rtlsdr_dev_t *dev, uint8_t gpio, int val);
@@ -1649,22 +1648,11 @@ static void LIBUSB_CALL _libusb_callback(struct libusb_transfer *xfer)
 			dev->cb(xfer->buffer, xfer->actual_length, dev->cb_ctx);
 
 		libusb_submit_transfer(xfer); /* resubmit transfer */
-		dev->xfer_errors = 0;
-	} else if (LIBUSB_TRANSFER_CANCELLED != xfer->status) {
-#ifndef _WIN32
-		if (LIBUSB_TRANSFER_ERROR == xfer->status)
-			dev->xfer_errors++;
-
-		if (dev->xfer_errors >= dev->xfer_buf_num ||
-		    LIBUSB_TRANSFER_NO_DEVICE == xfer->status) {
-#endif
-			dev->dev_lost = 1;
-			rtlsdr_cancel_async(dev);
-			fprintf(stderr, "cb transfer status: %d, "
-				"canceling...\n", xfer->status);
-#ifndef _WIN32
-		}
-#endif
+	} else if (LIBUSB_TRANSFER_CANCELLED != xfer->status &&
+				LIBUSB_TRANSFER_COMPLETED != xfer->status) {
+		dev->dev_lost = 1;
+		rtlsdr_cancel_async(dev);
+		fprintf(stderr, "cb transfer status: %d, canceling...\n", xfer->status);
 	}
 }
 
