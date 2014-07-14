@@ -1653,7 +1653,7 @@ static void LIBUSB_CALL _libusb_callback(struct libusb_transfer *xfer)
 			if (0 == r)
 				do_free_xfer = 0;
 			else
-				fprintf(stderr, "Failed to resubmit transfer!\n");
+				fprintf(stderr, "Failed to resubmit transfer (err %d)!\n", r);
 		}
 	} else if (LIBUSB_TRANSFER_CANCELLED != xfer->status) {
 		fprintf(stderr, "cb transfer status: %d, canceling...\n", xfer->status);
@@ -1785,7 +1785,7 @@ int rtlsdr_read_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx,
 
 		r = libusb_submit_transfer(dev->xfer[i]);
 		if (r < 0) {
-			fprintf(stderr, "Failed to submit transfer %i!\n", i);
+			fprintf(stderr, "Failed to submit transfer %i (err %d)!\n", i, r);
 			dev->async_status = RTLSDR_CANCELING;
 
 			/* Simulate processing of cancelled transfers
