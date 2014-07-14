@@ -1791,6 +1791,7 @@ int rtlsdr_read_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx,
 			/* Simulate processing of cancelled transfers
 			 * to account for unsubmitted requests */
 			while (i < dev->xfer_buf_num) {
+				dev->xfer[i]->user_data = dev;
 				dev->xfer[i]->status = LIBUSB_TRANSFER_CANCELLED;
 				_libusb_callback(dev->xfer[i]);
 				++i;
